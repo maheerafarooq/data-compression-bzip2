@@ -1,0 +1,8 @@
+aaabbbbccccccdddddddeeeeeeee banana banana banana
+
+This is a Stage 1 pipeline test.
+Compression algorithms work better with repeated patterns.
+
+AAAAAAAAAAAAAAAAAAAA
+BBBBBBBBBBBBBBBBBBBB
+CCCCCCCCCCCCCCCCCCCC

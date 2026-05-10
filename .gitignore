@@ -1,0 +1,21 @@
+# Build artifacts
+*.o
+*.exe
+bzip2_impl
+bzip2_impl.exe
+
+# Benchmark scratch
+_single_result.csv
+
+# Generated results — keep the two deliverables required by §7.3 and §9.3,
+# ignore everything else so scratch runs don't pollute the repo.
+results/*
+!results/.gitkeep
+!results/results.csv
+!results/compression_ratio.png
+
+# Editor / OS
+.vscode/
+*.swp
+*~
+.DS_Store
