@@ -43,7 +43,7 @@ static uint64_t get_u64_le(const unsigned char *in, size_t *p) {
  * then decode back to plain block for verification.
  */
 static int process_one_block(const unsigned char *in, size_t n, const AppConfig *cfg,
-                             int verbose,
+                             int verbose, int block_index,
                              unsigned char **entropy_chunk_out, size_t *entropy_len_out,
                              unsigned char *plain_out, size_t *plain_len_out) {
     if (!in || !cfg || !entropy_chunk_out || !entropy_len_out || !plain_out || !plain_len_out) {
@@ -244,9 +244,16 @@ static int process_one_block(const unsigned char *in, size_t n, const AppConfig 
     }
 
     if (verbose) {
-        /* Caller prints block context */
-        printf("  [block] plain=%zu rle1=%zu rle2=%zu entropy=%zu\n", n, rle1_len, rle2_len,
-               ent_len);
+        printf("    %-12s %zu bytes --> %zu bytes\n", "Raw Input", n, n);
+        printf("    %-12s %zu bytes --> %zu bytes\n", "RLE-1", n, rle1_len);
+        printf("      (BWT mode: %s)\n", cfg->bwt_use_matrix ? "naive matrix" : "suffix-array");
+        printf("    %-12s %zu bytes --> %zu bytes\n", "BWT", rle1_len, rle1_len);
+        printf("    %-12s %zu bytes --> %zu bytes\n", "MTF", rle1_len, rle1_len);
+        printf("    %-12s %zu bytes --> %zu bytes\n", "RLE-2", rle1_len, rle2_len);
+        printf("    %-12s %zu bytes --> %zu bytes\n",
+               cfg->huffman_enabled ? "Huffman" : "Raw pack", rle2_len, ent_len);
+        printf("    >> block #%d  original=%zu  after_bwt=%zu  compressed=%zu  idx=%d\n",
+               block_index, n, rle1_len, ent_len, primary);
     }
 
     *entropy_chunk_out = entr;
@@ -286,7 +293,8 @@ static void print_preview_line(const char *label, const unsigned char *buf, size
 int pipeline_run(const unsigned char *input, size_t n, const AppConfig *cfg,
                  int show_intermediate, size_t *total_compressed_bytes,
                  unsigned char **decoded_out, size_t *decoded_len,
-                 size_t *peak_memory_bytes) {
+                 size_t *peak_memory_bytes,
+                 unsigned char **compressed_out) {
     if (!cfg || !total_compressed_bytes || !decoded_out || !decoded_len) {
         return -1;
     }
@@ -340,14 +348,14 @@ int pipeline_run(const unsigned char *input, size_t n, const AppConfig *cfg,
 
     uint32_t num_blocks = (uint32_t)((n + bs - 1) / bs);
     if (show_intermediate) {
-        printf("Pipeline: %zu byte input, block_size=%zu → %u block(s)\n"
-               "Stages per block: RLE-1(%s) → BWT(%s) → MTF(%s) → RLE-2(%s) → %s\n",
-               n, bs, num_blocks,
-               local.rle1_enabled ? "on" : "pass",
-               local.bwt_use_matrix ? "matrix" : "suffix_array",
-               local.mtf_enabled ? "on" : "pass",
-               local.rle2_enabled ? "on" : "pass",
-               local.huffman_enabled ? "Huffman" : "raw+RLE2 package");
+        printf("\n--- Encoding %zu bytes  |  block_size=%zu  |  %u block(s) ---\n",
+               n, bs, num_blocks);
+        printf("  Chain: RLE-1[%s] > BWT[%s] > MTF[%s] > RLE-2[%s] > %s\n",
+               local.rle1_enabled ? "on" : "skip",
+               local.bwt_use_matrix ? "matrix" : "SA",
+               local.mtf_enabled ? "on" : "skip",
+               local.rle2_enabled ? "on" : "skip",
+               local.huffman_enabled ? "Huffman" : "raw");
     }
 
     unsigned char *package = (unsigned char *)malloc(12);
@@ -374,7 +382,7 @@ int pipeline_run(const unsigned char *input, size_t n, const AppConfig *cfg,
         size_t         ch_len = 0;
         size_t         plain_chk = 0;
         if (process_one_block(input + offset, bl, &local,
-                               show_intermediate && bi == 0,
+                               show_intermediate, (int)bi,
                                &chunk, &ch_len, decoded + dec_off, &plain_chk) != 0) {
             free(package);
             free(decoded);
@@ -400,9 +408,6 @@ int pipeline_run(const unsigned char *input, size_t n, const AppConfig *cfg,
         memcpy(package + pp, chunk, ch_len);
         pp += ch_len;
         dec_off += bl;
-        if (show_intermediate && bi == 0 && chunk && ch_len > 0) {
-            print_preview_line("  First block entropy chunk (prefix)", chunk, ch_len < 48 ? ch_len : 48);
-        }
         free(chunk);
     }
 
@@ -420,11 +425,20 @@ int pipeline_run(const unsigned char *input, size_t n, const AppConfig *cfg,
     }
 
     if (show_intermediate) {
-        printf("Compressed package size (BZP1 container + entropy chunks): %zu bytes\n", pp);
-        print_preview_line("Recovered (full)", decoded, n < 96 ? n : 96);
-        printf("Verify full file: %s\n", memcmp(input, decoded, n) == 0 ? "OK" : "FAIL");
+        printf("\n  Preview: ");
+        size_t plim = n < 200 ? n : 200;
+        for (size_t i = 0; i < plim; i++) {
+            if (input[i] >= 32 && input[i] < 127) printf("%c", input[i]);
+            else printf(".");
+        }
+        if (n > plim) printf("...");
+        printf("\n");
     }
 
-    free(package);
+    if (compressed_out) {
+        *compressed_out = package;
+    } else {
+        free(package);
+    }
     return 0;
 }

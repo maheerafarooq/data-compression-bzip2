@@ -134,7 +134,7 @@ static int benchmark_one_file(const char *path, AppConfig *cfg, FILE *csv) {
     }
 
     clock_t start = clock();
-    int     pr = pipeline_run(data, len, cfg, 0, &final_size, &decoded, &dec_len, &peak_bytes);
+    int     pr = pipeline_run(data, len, cfg, 0, &final_size, &decoded, &dec_len, &peak_bytes, NULL);
     clock_t end = clock();
     free(data);
     free(decoded);
@@ -486,7 +486,7 @@ static int full_pipeline_process(unsigned char *input, size_t n, int show, size_
     AppConfig cfg;
     config_set_defaults(&cfg);
     config_load(CONFIG_DEFAULT_PATH, &cfg);
-    return pipeline_run(input, n, &cfg, show, final_size, decoded_out, decoded_len_out, NULL);
+    return pipeline_run(input, n, &cfg, show, final_size, decoded_out, decoded_len_out, NULL, NULL);
 }
 
 static void run_stage1_pipeline_file(void) {
@@ -619,20 +619,94 @@ static void menu(void) {
     }
 }
 
+static void run_encode_single(const char *path) {
+    AppConfig cfg;
+    config_set_defaults(&cfg);
+    config_load(CONFIG_DEFAULT_PATH, &cfg);
+
+    char err[256];
+    if (config_validate_block_size(cfg.block_size, err, sizeof err) != 0) {
+        fprintf(stderr, "%s", err);
+        return;
+    }
+
+    unsigned char *data = NULL;
+    size_t len = 0;
+    if (read_file(path, &data, &len) != 0) return;
+
+    size_t final_size = 0, dec_len = 0, peak_bytes = 0;
+    unsigned char *decoded = NULL;
+    unsigned char *compressed = NULL;
+
+    int rc = pipeline_run(data, len, &cfg, 1, &final_size, &decoded, &dec_len, &peak_bytes, &compressed);
+
+    if (rc != 0) {
+        fprintf(stderr, "Encoding failed for: %s\n", path);
+        free(data);
+        free(decoded);
+        free(compressed);
+        return;
+    }
+
+    double ratio = len > 0 ? (double)final_size / (double)len : 0.0;
+    double saved  = len > 0 ? (1.0 - ratio) * 100.0 : 0.0;
+
+    printf("\n  Compressed %zu bytes down to %zu bytes (%.1f%% saved)\n", len, final_size, saved);
+
+    /* Write compressed output */
+    if (compressed && final_size > 0) {
+        write_file("output.bin", compressed, final_size);
+        printf("  Saved compressed data to output.bin\n");
+    }
+
+    /* Offer decode verification */
+    char line[64];
+    printf("\nWould you like to decode and verify the result? (y/n): ");
+    if (fgets(line, sizeof line, stdin) && (line[0] == 'y' || line[0] == 'Y')) {
+        printf("\n  ** Round-trip verification **\n");
+        if (dec_len == len && memcmp(data, decoded, len) == 0) {
+            printf("     Decoded  : %zu bytes\n", dec_len);
+            printf("     Original : %zu bytes\n", len);
+            printf("     Status   : OK - perfect match\n");
+        } else {
+            printf("     Decoded  : %zu bytes (expected %zu)\n", dec_len, len);
+            printf("     Status   : MISMATCH - data differs!\n");
+        }
+
+        char dec_path[512];
+        snprintf(dec_path, sizeof dec_path, "%s.decoded", path);
+        if (write_file(dec_path, decoded, dec_len) == 0) {
+            printf("     Saved decoded file: %s\n", dec_path);
+        }
+    } else {
+        printf("  Verification skipped.\n");
+    }
+
+    free(data);
+    free(decoded);
+    free(compressed);
+}
+
 static void usage(const char *argv0) {
     printf(
         "Usage:\n"
         "  %s\n"
         "      Full pipeline on every file under input_directory → results/results.csv (see config.ini).\n"
+        "  %s --encode <file>\n"
+        "      Encode a single file, display compression stats, and optionally decode to verify.\n"
         "  %s --menu\n"
         "      Interactive menu (per-stage tests, single-file benchmark, …).\n"
         "  %s --benchmark <file> <block-size> [csv-path]\n"
         "      Benchmark one file only.\n"
         "  %s --help\n",
-        argv0, argv0, argv0, argv0);
+        argv0, argv0, argv0, argv0, argv0);
 }
 
 int main(int argc, char **argv) {
+    if (argc == 3 && strcmp(argv[1], "--encode") == 0) {
+        run_encode_single(argv[2]);
+        return 0;
+    }
     if (argc >= 4 && strcmp(argv[1], "--benchmark") == 0) {
         run_benchmark_file(argv[2], argv[3], argc >= 5 ? argv[4] : "results/results.csv");
         return 0;

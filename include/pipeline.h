@@ -18,6 +18,7 @@
 int pipeline_run(const unsigned char *input, size_t n, const AppConfig *cfg,
                  int show_intermediate, size_t *total_compressed_bytes,
                  unsigned char **decoded_out, size_t *decoded_len,
-                 size_t *peak_memory_bytes);
+                 size_t *peak_memory_bytes,
+                 unsigned char **compressed_out);
 
 #endif
